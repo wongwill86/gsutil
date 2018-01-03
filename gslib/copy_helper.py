@@ -2595,12 +2595,14 @@ def _DownloadObjectToFileNonResumable(src_url, src_obj_metadata, dst_url,
 
     # This is used to pass the mediaLink and the size into the download so that
     # we can avoid making an extra HTTP call.
-    serialization_data = GetDownloadSerializationData(
-        src_obj_metadata, 0, user_project=gsutil_api.user_project)
+    serialization_data = None # Transfer invalid (possible encoding error: ('Cannot use uninitialized %s', 'Download'))
+    # GetDownloadSerializationData(
+        #src_obj_metadata, 0, user_project=gsutil_api.user_project)
 
-    progress_callback = FileProgressCallbackHandler(
-        gsutil_api.status_queue, src_url=src_url, dst_url=dst_url,
-        operation_name='Downloading').call
+    progress_callback = None # ArgumentException: Download size is required when callbacks are requested for a download, but no size was provided.
+    # FileProgressCallbackHandler(
+        # gsutil_api.status_queue, src_url=src_url, dst_url=dst_url,
+        # operation_name='Downloading').call
 
     if global_copy_helper_opts.test_callback_file:
       with open(global_copy_helper_opts.test_callback_file, 'rb') as test_fp:
@@ -2617,7 +2619,9 @@ def _DownloadObjectToFileNonResumable(src_url, src_obj_metadata, dst_url,
     if fp:
       fp.close()
 
-  return src_obj_metadata.size, server_encoding
+  # return src_obj_metadata.size, server_encoding
+  # This number is used for stat keeping purposes, don't error none size
+  return 1, server_encoding
 
 
 def _DownloadObjectToFile(src_url, src_obj_metadata, dst_url,
@@ -2693,7 +2697,7 @@ def _DownloadObjectToFile(src_url, src_obj_metadata, dst_url,
                             status_queue=gsutil_api.status_queue))
       if 'crc32c' in digesters:
         digesters['crc32c'].crcValue = crc32c
-    elif download_strategy is CloudApi.DownloadStrategy.ONE_SHOT:
+    elif download_strategy is CloudApi.DownloadStrategy.ONE_SHOT or True: # Force one shot no resume because size is an issue
       (bytes_transferred, server_encoding) = (
           _DownloadObjectToFileNonResumable(
               src_url, src_obj_metadata, dst_url, download_file_name,

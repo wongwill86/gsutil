@@ -169,14 +169,19 @@ class CloudWildcardIterator(WildcardIterator):
         if (not ContainsWildcard(self.wildcard_url.url_string) and
             self.wildcard_url.IsObject() and not self.all_versions):
           try:
-            get_object = self.gsutil_api.GetObjectMetadata(
-                self.wildcard_url.bucket_name,
-                self.wildcard_url.object_name,
-                generation=self.wildcard_url.generation,
-                provider=self.wildcard_url.scheme,
-                fields=get_fields)
+            # DON'T waste time $$ for object metadata, just download it
+            # get_object = self.gsutil_api.GetObjectMetadata(
+                # self.wildcard_url.bucket_name,
+                # self.wildcard_url.object_name,
+                # generation=self.wildcard_url.generation,
+                # provider=self.wildcard_url.scheme,
+                # fields=get_fields)
+
+            import gslib.third_party.storage_apitools.storage_v1_messages as _messages
+
+
             yield self._GetObjectRef(
-                self.wildcard_url.bucket_url_string, get_object,
+                self.wildcard_url.bucket_url_string, _messages.Object(name=self.wildcard_url.object_name, etag = 'abc'),
                 with_version=(self.all_versions or single_version_request))
             return
           except (NotFoundException, AccessDeniedException):
