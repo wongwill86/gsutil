@@ -2615,10 +2615,10 @@ def _DownloadObjectToFileNonResumable(src_url, src_obj_metadata, dst_url,
         provider=src_url.scheme, serialization_data=serialization_data,
         digesters=digesters, progress_callback=progress_callback,
         decryption_tuple=CryptoTupleFromKey(decryption_key))
+
   finally:
     if fp:
       fp.close()
-
   # return src_obj_metadata.size, server_encoding
   # This number is used for stat keeping purposes, don't error none size
   return 1, server_encoding
@@ -2628,7 +2628,7 @@ def _DownloadObjectToFile(src_url, src_obj_metadata, dst_url,
                           gsutil_api, logger, command_obj,
                           copy_exception_handler, allow_splitting=True,
                           decryption_key=None, is_rsync=False,
-                          preserve_posix=False):
+                          preserve_posix=False, gzip_exts=None):
   """Downloads an object to a local file.
 
   Args:
@@ -2643,6 +2643,7 @@ def _DownloadObjectToFile(src_url, src_obj_metadata, dst_url,
     decryption_key: Base64-encoded decryption key for the source object, if any.
     is_rsync: Whether or not the caller is the rsync command.
     preserve_posix: Whether or not to preserve POSIX attributes.
+    gzip_exts: Preserve gzip encoding if downloaded file has these extensions
 
   Returns:
     (elapsed_time, bytes_transferred, dst_url, md5), where time elapsed
@@ -2717,7 +2718,7 @@ def _DownloadObjectToFile(src_url, src_obj_metadata, dst_url,
   local_md5 = _ValidateAndCompleteDownload(
       logger, src_url, src_obj_metadata, dst_url, need_to_unzip, server_gzip,
       digesters, hash_algs, download_file_name, api_selector, bytes_transferred,
-      gsutil_api, is_rsync=is_rsync, preserve_posix=preserve_posix)
+      gsutil_api, is_rsync=is_rsync, preserve_posix=preserve_posix, gzip_exts=gzip_exts)
 
   with open_files_lock:
     open_files_map.delete(download_file_name)
@@ -2746,7 +2747,8 @@ def _ValidateAndCompleteDownload(logger, src_url, src_obj_metadata, dst_url,
                                  hash_algs, download_file_name,
                                  api_selector, bytes_transferred, gsutil_api,
                                  is_rsync=False,
-                                 preserve_posix=False):
+                                 preserve_posix=False,
+                                 gzip_exts=None):
   """Validates and performs necessary operations on a downloaded file.
 
   Validates the integrity of the downloaded file using hash_algs. If the file
@@ -2833,35 +2835,43 @@ def _ValidateAndCompleteDownload(logger, src_url, src_obj_metadata, dst_url,
       raise
 
   if need_to_unzip or server_gzip:
-    # Log that we're uncompressing if the file is big enough that
-    # decompressing would make it look like the transfer "stalled" at the end.
-    if bytes_transferred > TEN_MIB:
-      logger.info(
-          'Uncompressing temporarily gzipped file to %s...', final_file_name)
+    # Preserve encoding of gzip if downloaded file contains extension specified
+    # but clearly indicate gzip extension on the final download file name
+    fname_parts =file_name.split('.')
+    if (gzip_exts == GZIP_ALL_FILES or
+      (gzip_exts and len(fname_parts) > 1 and fname_parts[-1] in gzip_exts)):
+      final_file_name = final_file_name + '.gz'
+    else:
+      # Log that we're uncompressing if the file is big enough that
+      # decompressing would make it look like the transfer "stalled" at the end.
+      if bytes_transferred > TEN_MIB:
+        logger.info(
+            'Uncompressing temporarily gzipped file to %s...', final_file_name)
 
-    gzip_fp = None
-    try:
-      # Downloaded temporarily gzipped file, unzip to file without '_.gztmp'
-      # suffix.
-      gzip_fp = gzip.open(file_name, 'rb')
-      with open(final_file_name, 'wb') as f_out:
-        data = gzip_fp.read(GZIP_CHUNK_SIZE)
-        while data:
-          f_out.write(data)
+      gzip_fp = None
+      try:
+        # Downloaded temporarily gzipped file, unzip to file without '_.gztmp'
+        # suffix.
+        gzip_fp = gzip.open(file_name, 'rb')
+        with open(final_file_name, 'wb') as f_out:
           data = gzip_fp.read(GZIP_CHUNK_SIZE)
-    except IOError, e:
-      # In the XML case where we don't know if the file was gzipped, raise
-      # the original hash exception if we find that it wasn't.
-      if 'Not a gzipped file' in str(e) and hash_invalid_exception:
-        # Linter improperly thinks we're raising None despite the above check.
-        # pylint: disable=raising-bad-type
-        raise hash_invalid_exception
-    finally:
-      if gzip_fp:
-        gzip_fp.close()
 
-    os.unlink(file_name)
-    file_name = final_file_name
+          while data:
+            f_out.write(data)
+            data = gzip_fp.read(GZIP_CHUNK_SIZE)
+      except IOError, e:
+        # In the XML case where we don't know if the file was gzipped, raise
+        # the original hash exception if we find that it wasn't.
+        if 'Not a gzipped file' in str(e) and hash_invalid_exception:
+          # Linter improperly thinks we're raising None despite the above check.
+          # pylint: disable=raising-bad-type
+          raise hash_invalid_exception
+      finally:
+        if gzip_fp:
+          gzip_fp.close()
+
+      os.unlink(file_name)
+      file_name = final_file_name
 
   if not digest_verified:
     try:
@@ -3397,7 +3407,8 @@ def PerformCopy(
                                    allow_splitting=allow_splitting,
                                    decryption_key=decryption_key,
                                    is_rsync=is_rsync,
-                                   preserve_posix=preserve_posix)
+                                   preserve_posix=preserve_posix,
+                                   gzip_exts=gzip_exts)
     elif copy_in_the_cloud:
       PutToQueueWithTimeout(
           gsutil_api.status_queue,
