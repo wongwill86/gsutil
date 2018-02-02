@@ -2569,7 +2569,8 @@ def _DownloadObjectToFileResumable(src_url, src_obj_metadata, dst_url,
 
 def _DownloadObjectToFileNonResumable(src_url, src_obj_metadata, dst_url,
                                       download_file_name, gsutil_api,
-                                      digesters, decryption_key=None):
+                                      digesters, decryption_key=None,
+                                      compressed_encoding=False):
   """Downloads an object to a local file using the non-resumable strategy.
 
   This function does not support component transfers.
@@ -2614,7 +2615,8 @@ def _DownloadObjectToFileNonResumable(src_url, src_obj_metadata, dst_url,
         download_strategy=CloudApi.DownloadStrategy.ONE_SHOT,
         provider=src_url.scheme, serialization_data=serialization_data,
         digesters=digesters, progress_callback=progress_callback,
-        decryption_tuple=CryptoTupleFromKey(decryption_key))
+        decryption_tuple=CryptoTupleFromKey(decryption_key),
+        compressed_encoding=compressed_encoding)
 
   finally:
     if fp:
@@ -2687,6 +2689,13 @@ def _DownloadObjectToFile(src_url, src_obj_metadata, dst_url,
   download_complete = (src_obj_metadata.size == 0)
   bytes_transferred = 0
 
+  fname_parts = download_file_name.split('.')
+  if (gzip_exts == GZIP_ALL_FILES or
+    (gzip_exts and len(fname_parts) > 1 and fname_parts[-1] in gzip_exts)):
+    compressed_encoding = True
+  else:
+    compressed_encoding = False
+
   start_time = time.time()
   if not download_complete:
     if sliced_download:
@@ -2702,7 +2711,8 @@ def _DownloadObjectToFile(src_url, src_obj_metadata, dst_url,
       (bytes_transferred, server_encoding) = (
           _DownloadObjectToFileNonResumable(
               src_url, src_obj_metadata, dst_url, download_file_name,
-              gsutil_api, digesters, decryption_key=decryption_key))
+              gsutil_api, digesters, decryption_key=decryption_key,
+              compressed_encoding=compressed_encoding))
     elif download_strategy is CloudApi.DownloadStrategy.RESUMABLE:
       (bytes_transferred, server_encoding) = (
           _DownloadObjectToFileResumable(
@@ -2715,10 +2725,14 @@ def _DownloadObjectToFile(src_url, src_obj_metadata, dst_url,
   end_time = time.time()
 
   server_gzip = server_encoding and server_encoding.lower().endswith('gzip')
+
+  print('server_encoding')
+  print(server_encoding)
   local_md5 = _ValidateAndCompleteDownload(
       logger, src_url, src_obj_metadata, dst_url, need_to_unzip, server_gzip,
       digesters, hash_algs, download_file_name, api_selector, bytes_transferred,
-      gsutil_api, is_rsync=is_rsync, preserve_posix=preserve_posix, gzip_exts=gzip_exts)
+      gsutil_api, is_rsync=is_rsync, preserve_posix=preserve_posix,
+      compressed_encoding=compressed_encoding)
 
   with open_files_lock:
     open_files_map.delete(download_file_name)
@@ -2748,7 +2762,7 @@ def _ValidateAndCompleteDownload(logger, src_url, src_obj_metadata, dst_url,
                                  api_selector, bytes_transferred, gsutil_api,
                                  is_rsync=False,
                                  preserve_posix=False,
-                                 gzip_exts=None):
+                                 compressed_encoding=False):
   """Validates and performs necessary operations on a downloaded file.
 
   Validates the integrity of the downloaded file using hash_algs. If the file
@@ -2834,12 +2848,14 @@ def _ValidateAndCompleteDownload(logger, src_url, src_obj_metadata, dst_url,
         os.unlink(file_name)
       raise
 
+  print('need to unzip')
+  print(need_to_unzip)
+  print('server_gzip')
+  print(server_gzip)
   if need_to_unzip or server_gzip:
     # Preserve encoding of gzip if downloaded file contains extension specified
     # but clearly indicate gzip extension on the final download file name
-    fname_parts =file_name.split('.')
-    if (gzip_exts == GZIP_ALL_FILES or
-      (gzip_exts and len(fname_parts) > 1 and fname_parts[-1] in gzip_exts)):
+    if compressed_encoding:
       final_file_name = final_file_name + '.gz'
     else:
       # Log that we're uncompressing if the file is big enough that
